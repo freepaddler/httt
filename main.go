@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -29,46 +32,52 @@ func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	log.Printf("server stated at port %s", port)
 	if err := http.ListenAndServe(":"+port, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("RemoteAddr:%s, Host:%s, Method:%s, URI:%s", r.RemoteAddr, r.Host, r.Method, r.URL)
+		reqId := r.Header.Get("X-Request-Id")
+		if reqId == "" {
+			reqId = uuid.NewString()
+		}
+
+		var buf bytes.Buffer
+		lw := io.Writer(&buf)
+		_, _ = fmt.Fprintf(lw, "Request ID: %s\n", reqId)
+		m := io.MultiWriter(w, lw)
+
 		defer r.Body.Close()
 
 		w.Header().Set("Content-Type", "text/plain")
 		w.Header().Set("X-Httt-Host", host)
+		w.Header().Set("X-Request-Id", reqId)
 
-		_, _ = fmt.Fprintf(w, "Headers:\n")
+		_, _ = fmt.Fprintf(m, "Headers:\n")
 		for name, values := range r.Header {
 			for _, value := range values {
-				_, _ = fmt.Fprintf(w, "%s%s: %s\n", ident, name, value)
+				_, _ = fmt.Fprintf(m, "%s%s: %s\n", ident, name, value)
 			}
 		}
 
-		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintf(m, "Proto: %s\n", r.Proto)
+		_, _ = fmt.Fprintf(m, "Content-Length: %d\n", r.ContentLength)
+		_, _ = fmt.Fprintf(m, "Transfer-Encoding: %s\n", r.TransferEncoding)
 
-		_, _ = fmt.Fprintf(w, "Proto: %s\n", r.Proto)
-		_, _ = fmt.Fprintf(w, "Content-Length: %d\n", r.ContentLength)
-		_, _ = fmt.Fprintf(w, "Transfer-Encoding: %s\n", r.TransferEncoding)
-
-		_, _ = fmt.Fprintln(w)
-
-		_, _ = fmt.Fprintf(w, "RemoteAddr: %s\n", r.RemoteAddr)
+		_, _ = fmt.Fprintf(m, "RemoteAddr: %s\n", r.RemoteAddr)
 		if authHeader := r.Header.Get("Authorization"); authHeader != "" && strings.HasPrefix(authHeader, "Basic ") {
 			authHeader = strings.TrimPrefix(authHeader, "Basic ")
 			if creds, err := base64.StdEncoding.DecodeString(authHeader); err == nil {
-				_, _ = fmt.Fprintf(w, "Credentials: %s\n", creds)
+				_, _ = fmt.Fprintf(m, "Credentials: %s\n", creds)
 			}
 		}
-		_, _ = fmt.Fprintln(w)
 
-		_, _ = fmt.Fprintf(w, "Host: %s\n", r.Host)
-		_, _ = fmt.Fprintf(w, "Method: %s\n", r.Method)
-		_, _ = fmt.Fprintf(w, "URL: %s\n", r.RequestURI)
+		_, _ = fmt.Fprintf(m, "Host: %s\n", r.Host)
+		_, _ = fmt.Fprintf(m, "Method: %s\n", r.Method)
+		_, _ = fmt.Fprintf(m, "URL: %s\n", r.RequestURI)
 
 		if withBody {
-			if body, err := io.ReadAll(r.Body); err == nil {
-				_, _ = fmt.Fprintf(w, "\nBody:\n")
+			if body, err := io.ReadAll(r.Body); err == nil && len(body) > 0 {
+				_, _ = fmt.Fprintf(w, "Body:\n")
 				_, _ = fmt.Fprintf(w, "%s", body)
 			}
 		}
+		log.Println(buf.String())
 
 	})); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
