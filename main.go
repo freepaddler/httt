@@ -12,11 +12,21 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
 	ident       = "  "
 	defaultPort = "8080"
+)
+
+var requestCounter = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "http_requests_total_labeled",
+		Help: "Total number of HTTP requests, labeled by label",
+	},
+	[]string{"label"},
 )
 
 func main() {
@@ -29,13 +39,21 @@ func main() {
 	if host == "" {
 		host, _ = os.Hostname()
 	}
+
+	prometheus.MustRegister(requestCounter)
+
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	log.Printf("server stated at port %s", port)
-	if err := http.ListenAndServe(":"+port, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqId := r.Header.Get("X-Request-Id")
 		if reqId == "" {
 			reqId = uuid.NewString()
 		}
+
+		label := r.Header.Get("label")
+		fmt.Println("label:", label)
+		requestCounter.WithLabelValues(label).Inc()
 
 		var buf bytes.Buffer
 		lw := io.Writer(&buf)
@@ -78,8 +96,12 @@ func main() {
 			}
 		}
 		log.Println(buf.String())
+	})
 
-	})); !errors.Is(err, http.ErrServerClosed) {
+	http.Handle("/metrics", promhttp.Handler())
+	http.HandleFunc("/", handler)
+
+	if err := http.ListenAndServe(":"+port, nil); !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
