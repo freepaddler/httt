@@ -10,3 +10,4 @@ Basically is used to check reverse proxy and balancers setup. Returns all header
 #### Run
 + `docker run -p 8080:8080 freepaddler/httt`
 + `docker run -p 8080:8080 -e WITH_BODY=1 freepaddler/httt`
+  
